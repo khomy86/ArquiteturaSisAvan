@@ -251,13 +251,15 @@ function AppContent() {
     <Box sx={{ flexGrow: 1 }}>
        <AppBar position="static">
          <Toolbar>
-           {/* Make title a link back to home */}
-           <Link component={RouterLink} to="/" sx={{ color: 'inherit', textDecoration: 'none' }}>
-             <Typography variant="h6" component="div" sx={{ flexGrow: 1 }}>
+           {/* Add flexGrow to push the button to the right */}
+           <Typography variant="h6" component="div" sx={{ flexGrow: 1 }}>
+             <Link component={RouterLink} to="/" sx={{ color: 'inherit', textDecoration: 'none' }}>
                UALFlix
-             </Typography>
-           </Link>
-          <Button color="inherit" onClick={() => setUploadDialogOpen(true)}>Upload Video</Button>
+             </Link>
+           </Typography>
+           <Button color="inherit" onClick={() => setUploadDialogOpen(true)}>
+             Upload Video
+           </Button>
          </Toolbar>
        </AppBar>
       <Container sx={{ mt: 4, mb: 4 }}>

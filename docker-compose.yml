@@ -8,8 +8,13 @@ services:
     ports:
       - "3000:3000"
     environment:
-      - REACT_APP_API_URL=http://loadbalancer:80/api
-      - REACT_APP_STREAMING_URL=http://loadbalancer:80/stream
+      - REACT_APP_API_URL=http://localhost/api
+      - REACT_APP_STREAMING_URL=http://localhost/stream
+      - WATCHPACK_POLLING=true
+    volumes:
+      - ./web:/app
+      - /app/node_modules
+    command: npm start
     depends_on:
       - loadbalancer
 
