@@ -1,9 +1,9 @@
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 import os
-from typing import Optional
+from typing import Optional, Tuple
 import mimetypes
 from minio import Minio
 import io
@@ -50,7 +50,7 @@ async def stream_video(video_id: str, request: Request):
         data = minio_client.get_object(
             BUCKET_NAME,
             object_name,
-            start=start,
+            offset=start,
             length=end - start + 1
         )
         
@@ -60,6 +60,7 @@ async def stream_video(video_id: str, request: Request):
             "Accept-Ranges": "bytes",
             "Content-Length": str(content_length),
             "Content-Type": "video/mp4",
+            "Cross-Origin-Resource-Policy": "cross-origin"
         }
         
         return StreamingResponse(
@@ -69,9 +70,15 @@ async def stream_video(video_id: str, request: Request):
         )
         
     except Exception as e:
-        raise HTTPException(status_code=404, detail="Video not found")
+        # Log the error for debugging
+        print(f"Error streaming video {video_id} (object: {object_name}): {e}")
+        # Return a plain 404 response instead of FastAPI's default JSON error
+        # This prevents the ERR_BLOCKED_BY_ORB error when the video is not found
+        return Response(status_code=404, content=f"Video {object_name} not found.", media_type="text/plain")
 
-def parse_range_header(range_header: str, file_size: int) -> tuple[int, int]:
+def parse_range_header(range_header: Optional[str], file_size: int) -> Tuple[int, int]:
+    if not range_header:
+        return 0, file_size - 1
     try:
         range_type, range_value = range_header.split("=")
         if range_type.strip() != "bytes":

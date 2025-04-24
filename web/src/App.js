@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, useNavigate, useParams, Link as RouterLink } from 'react-router-dom';
 import {
   AppBar,
   Toolbar,
@@ -19,14 +19,25 @@ import {
   LinearProgress,
   Snackbar,
   Alert,
+  Link,
 } from '@mui/material';
 import ReactPlayer from 'react-player';
 import axios from 'axios';
 
-const API_BASE_URL = 'http://localhost:8000';
-const STREAMING_BASE_URL = 'http://localhost:8001';
+// Use environment variables or default to localhost:80 (load balancer)
+const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:80/api';
+const STREAMING_BASE_URL = process.env.REACT_APP_STREAMING_URL || 'http://localhost:80/stream';
 
 function App() {
+  return (
+    <Router>
+      <AppContent />
+    </Router>
+  );
+}
+
+// Extract main content into a separate component to use hooks like useNavigate
+function AppContent() {
   const [videos, setVideos] = useState([]);
   const [selectedVideo, setSelectedVideo] = useState(null);
   const [uploadDialogOpen, setUploadDialogOpen] = useState(false);
@@ -50,6 +61,7 @@ function App() {
       setVideos(response.data);
     } catch (error) {
       console.error('Error fetching videos:', error);
+      setSnackbar({ open: true, message: 'Failed to fetch videos', severity: 'error' });
     }
   };
 
@@ -126,160 +138,203 @@ function App() {
     }, 2000);
   };
 
-  const VideoList = () => (
-    <Grid container spacing={3}>
-      {videos.map((video) => (
-        <Grid item xs={12} sm={6} md={4} key={video.id}>
-          <Card>
-            <CardMedia
-              component="img"
-              height="140"
-              image={`https://img.youtube.com/vi/${video.url.split('v=')[1]}/hqdefault.jpg`}
-              alt={video.title}
-            />
-            <CardContent>
-              <Typography gutterBottom variant="h5" component="div">
-                {video.title}
-              </Typography>
-              <Typography variant="body2" color="text.secondary">
-                {video.description}
-              </Typography>
-              <Button
-                size="small"
-                color="primary"
-                onClick={() => setSelectedVideo(video)}
-                sx={{ mt: 2 }}
-              >
-                Watch Video
-              </Button>
-            </CardContent>
-          </Card>
-        </Grid>
-      ))}
-    </Grid>
-  );
+  // VideoList component now uses useNavigate
+  const VideoList = ({ videos }) => {
+    const navigate = useNavigate();
 
-  const VideoPlayer = () => (
-    <Box sx={{ width: '100%', maxWidth: 800, mx: 'auto', mt: 4 }}>
-      {selectedVideo && (
-        <>
-          <Typography variant="h4" gutterBottom>
-            {selectedVideo.title}
-          </Typography>
-          <ReactPlayer
-            url={selectedVideo.url}
-            controls
-            width="100%"
-            height="auto"
-          />
-          <Typography variant="body1" sx={{ mt: 2 }}>
-            {selectedVideo.description}
-          </Typography>
-          <Button
-            variant="contained"
-            onClick={() => setSelectedVideo(null)}
-            sx={{ mt: 2 }}
-          >
-            Back to Videos
-          </Button>
-        </>
-      )}
-    </Box>
-  );
+    return (
+      <Grid container spacing={3}>
+        {videos.map((video) => (
+          <Grid item xs={12} sm={6} md={4} key={video.id}>
+            <Card>
+              {/* Basic placeholder thumbnail logic - replace if needed */}
+              <CardMedia
+                component="div" // Use div for background image or a placeholder
+                sx={{ height: 140, backgroundColor: '#eee', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+              >
+                {/* Placeholder icon or text */}
+                <Typography variant="caption">Video Thumbnail</Typography>
+              </CardMedia>
+              <CardContent>
+                <Typography gutterBottom variant="h5" component="div">
+                  {video.title}
+                </Typography>
+                <Typography variant="body2" color="text.secondary">
+                  {video.description}
+                </Typography>
+                {/* Use Button + navigate or Link component */}
+                <Button
+                  size="small"
+                  color="primary"
+                  // Navigate to the video player route
+                  onClick={() => navigate(`/video/${video.id}`)}
+                  sx={{ mt: 2 }}
+                >
+                  Watch Video
+                </Button>
+                 {/* Alternative: Using Link */}
+                 {/* <Link component={RouterLink} to={`/video/${video.id}`} sx={{ mt: 2, display: 'block' }}>
+                   Watch Video (Link)
+                 </Link> */}
+              </CardContent>
+            </Card>
+          </Grid>
+        ))}
+      </Grid>
+    );
+  };
+
+  // VideoPlayer component now uses useParams to get videoId
+  const VideoPlayer = ({ videos }) => {
+    const { videoId } = useParams();
+    const navigate = useNavigate();
+    // Find the video object from the list based on the ID from the URL
+    const selectedVideo = videos.find(v => v.id === parseInt(videoId));
+
+    // Construct the ABSOLUTE video URL pointing to the Nginx proxy (port 80)
+    const nginxBaseUrl = 'http://localhost:80'; // Explicitly define the correct base
+    const absoluteVideoUrl = selectedVideo ? `${nginxBaseUrl}${selectedVideo.url}` : ''; // Construct correct absolute URL
+
+    if (!selectedVideo) {
+       // Handle case where video ID is invalid or videos haven't loaded yet
+       return (
+         <Box sx={{ textAlign: 'center', mt: 4 }}>
+           <Typography>Video not found or still loading...</Typography>
+           <Button variant="contained" onClick={() => navigate('/')} sx={{ mt: 2 }}>
+              Back to Videos
+           </Button>
+         </Box>
+       );
+    }
+
+    return (
+      <Box sx={{ width: '100%', maxWidth: 800, mx: 'auto', mt: 4 }}>
+          <>
+            <Typography variant="h4" gutterBottom>
+              {selectedVideo.title}
+            </Typography>
+            <ReactPlayer
+              url={absoluteVideoUrl} // Use the corrected ABSOLUTE URL
+              controls
+              playing // Optional: attempt to autoplay
+              width="100%"
+              height="auto"
+              onError={(e) => {
+                console.error('ReactPlayer Error:', e);
+                setSnackbar({ open: true, message: `Error playing video: ${e.type || 'Unknown error'}`, severity: 'error' });
+              }}
+            />
+            <Typography variant="body1" sx={{ mt: 2 }}>
+              {selectedVideo.description}
+            </Typography>
+            <Button
+              variant="contained"
+              // Navigate back to the home/list route
+              onClick={() => navigate('/')}
+              sx={{ mt: 2 }}
+            >
+              Back to Videos
+            </Button>
+          </>
+      </Box>
+    );
+  };
+
+  const handleCloseSnackbar = (event, reason) => {
+      if (reason === 'clickaway') {
+        return;
+      }
+      setSnackbar({ ...snackbar, open: false });
+    };
 
   return (
-    <Router>
-      <AppBar position="static">
-        <Toolbar>
-          <Typography variant="h6" component="div" sx={{ flexGrow: 1 }}>
-            UALFlix
-          </Typography>
-          <Button color="inherit" onClick={() => setUploadDialogOpen(true)}>
-            Upload Video
-          </Button>
-        </Toolbar>
-      </AppBar>
+    <Box sx={{ flexGrow: 1 }}>
+       <AppBar position="static">
+         <Toolbar>
+           {/* Make title a link back to home */}
+           <Link component={RouterLink} to="/" sx={{ color: 'inherit', textDecoration: 'none' }}>
+             <Typography variant="h6" component="div" sx={{ flexGrow: 1 }}>
+               UALFlix
+             </Typography>
+           </Link>
+          <Button color="inherit" onClick={() => setUploadDialogOpen(true)}>Upload Video</Button>
+         </Toolbar>
+       </AppBar>
+      <Container sx={{ mt: 4, mb: 4 }}>
+         {/* Setup Routes */}
+         <Routes>
+            {/* Route for the video list (home page) */}
+           <Route path="/" element={<VideoList videos={videos} />} />
+            {/* Route for the video player */}
+           <Route path="/video/:videoId" element={<VideoPlayer videos={videos} />} />
+         </Routes>
 
-      <Container sx={{ py: 4 }}>
-        {uploadProgress > 0 && uploadProgress < 100 && (
-          <Box sx={{ width: '100%', mb: 2 }}>
-            <LinearProgress variant="determinate" value={uploadProgress} />
-          </Box>
-        )}
+         {/* Upload Dialog remains the same */}
+         <Dialog open={uploadDialogOpen} onClose={() => setUploadDialogOpen(false)}>
+           <DialogTitle>Upload New Video</DialogTitle>
+           <DialogContent>
+              {/* Restore the missing input fields */}
+              <TextField
+                autoFocus
+                margin="dense"
+                label="Title"
+                fullWidth
+                value={newVideo.title}
+                onChange={(e) => setNewVideo({ ...newVideo, title: e.target.value })}
+              />
+              <TextField
+                margin="dense"
+                label="Description"
+                fullWidth
+                multiline
+                rows={4}
+                value={newVideo.description}
+                onChange={(e) => setNewVideo({ ...newVideo, description: e.target.value })}
+              />
+              <Button
+                variant="contained"
+                component="label"
+                sx={{ mt: 2 }}
+              >
+                Select Video File
+                <input
+                  type="file"
+                  hidden
+                  accept="video/*"
+                  onChange={(e) => setNewVideo({ ...newVideo, file: e.target.files[0] })}
+                />
+              </Button>
+              {newVideo.file && (
+                <Typography variant="body2" sx={{ mt: 1 }}>
+                  Selected: {newVideo.file.name}
+                </Typography>
+              )}
+              {/* Display upload progress if available */}
+               {uploadStatus && uploadProgress > 0 && uploadProgress < 100 && (
+                 <Box sx={{ width: '100%', mt: 2 }}>
+                   <LinearProgress variant="determinate" value={uploadProgress} />
+                 </Box>
+               )}
+           </DialogContent>
+           <DialogActions>
+             <Button onClick={() => setUploadDialogOpen(false)}>Cancel</Button>
+             <Button onClick={handleUpload}>Upload</Button>
+           </DialogActions>
+         </Dialog>
 
-        <Routes>
-          <Route
-            path="/"
-            element={
-              selectedVideo ? (
-                <VideoPlayer />
-              ) : (
-                <VideoList />
-              )
-            }
-          />
-        </Routes>
-      </Container>
-
-      <Dialog open={uploadDialogOpen} onClose={() => setUploadDialogOpen(false)}>
-        <DialogTitle>Upload New Video</DialogTitle>
-        <DialogContent>
-          <TextField
-            autoFocus
-            margin="dense"
-            label="Title"
-            fullWidth
-            value={newVideo.title}
-            onChange={(e) => setNewVideo({ ...newVideo, title: e.target.value })}
-          />
-          <TextField
-            margin="dense"
-            label="Description"
-            fullWidth
-            multiline
-            rows={4}
-            value={newVideo.description}
-            onChange={(e) => setNewVideo({ ...newVideo, description: e.target.value })}
-          />
-          <Button
-            variant="contained"
-            component="label"
-            sx={{ mt: 2 }}
+         {/* Snackbar for notifications */}
+         <Snackbar
+           open={snackbar.open}
+           autoHideDuration={6000}
+           onClose={handleCloseSnackbar}
+           anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
           >
-            Select Video File
-            <input
-              type="file"
-              hidden
-              accept="video/*"
-              onChange={(e) => setNewVideo({ ...newVideo, file: e.target.files[0] })}
-            />
-          </Button>
-          {newVideo.file && (
-            <Typography variant="body2" sx={{ mt: 1 }}>
-              Selected: {newVideo.file.name}
-            </Typography>
-          )}
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setUploadDialogOpen(false)}>Cancel</Button>
-          <Button onClick={handleUpload}>Upload</Button>
-        </DialogActions>
-      </Dialog>
-
-      <Snackbar
-        open={snackbar.open}
-        autoHideDuration={6000}
-        onClose={() => setSnackbar({ ...snackbar, open: false })}
-      >
-        <Alert
-          onClose={() => setSnackbar({ ...snackbar, open: false })}
-          severity={snackbar.severity}
-          sx={{ width: '100%' }}
-        >
-          {snackbar.message}
-        </Alert>
-      </Snackbar>
-    </Router>
+           <Alert onClose={handleCloseSnackbar} severity={snackbar.severity} sx={{ width: '100%' }}>
+             {snackbar.message}
+           </Alert>
+         </Snackbar>
+      </Container>
+    </Box>
   );
 }
 
