@@ -12,6 +12,7 @@ import uuid
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, Session
 from .models import Base, Video as VideoModel # Rename imported Video to avoid conflict
+import subprocess # Add subprocess import at the top
 
 app = FastAPI(title="UALFlix Catalog Service")
 
@@ -49,11 +50,20 @@ minio_client = Minio(
     secure=False
 )
 
-# Ensure bucket exists
+# Ensure buckets exist and set public read policy for thumbnails
 try:
-    minio_client.make_bucket("videos")
+    if not minio_client.bucket_exists("videos"):
+        minio_client.make_bucket("videos")
+    if not minio_client.bucket_exists("thumbnails"):
+        minio_client.make_bucket("thumbnails")
+
+    # Set public read policy for thumbnails bucket
+    policy = '{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":{\"AWS\":[\"*\"]},\"Action\":[\"s3:GetObject\"],\"Resource\":[\"arn:aws:s3:::thumbnails/*\"]}]}'
+    minio_client.set_bucket_policy("thumbnails", policy)
+    print("Applied public read policy to 'thumbnails' bucket.")
+
 except Exception as e:
-    print(f"Bucket already exists or error: {e}")
+    print(f"Error during MinIO bucket setup/policy application: {e}")
 
 # Pydantic model for request/response (unchanged)
 class Video(BaseModel):
@@ -63,6 +73,7 @@ class Video(BaseModel):
     duration: int  # in seconds
     url: str
     status: Optional[str] = "pending"
+    thumbnail_url: Optional[str] = None
 
     class Config:
         from_attributes = True # Enable ORM mode for mapping SQLAlchemy models (formerly orm_mode)
@@ -162,6 +173,7 @@ async def get_upload_status(upload_id: str):
 async def process_upload(upload_id: str, file_path: str, video_id: int):
     # Need a database session for the background task
     db = SessionLocal()
+    video = None # Define video outside try block for access in finally/except
     try:
         # Update status to processing
         await queue.update_status(upload_id, "processing")
@@ -171,42 +183,85 @@ async def process_upload(upload_id: str, file_path: str, video_id: int):
         if not video:
             raise Exception(f"Video with ID {video_id} not found in database for processing.")
 
-        # Upload to MinIO
+        # Upload original video to MinIO
         object_name = f"{video_id}.mp4" # Use the DB ID for the object name
         minio_client.fput_object("videos", object_name, file_path)
+        print(f"Successfully uploaded video {object_name} to MinIO.") # Added log
 
-        # Update video status in DB
+        # --- Thumbnail Generation ---
+        thumbnail_filename = f"thumbnail_{video_id}.jpg"
+        thumbnail_path = f"/tmp/{thumbnail_filename}"
+        thumbnail_object_name = f"{video_id}.jpg"
+        thumbnail_url = f"/thumbnails/{thumbnail_object_name}" # Relative URL for frontend/nginx
+
+        # Bucket creation/policy is now handled at startup, removed from here
+        # try:
+        # Ensure thumbnails bucket exists (optional, depends on setup)
+        # if not minio_client.bucket_exists("thumbnails"):
+        #      minio_client.make_bucket("thumbnails")
+        # Consider setting public read policy if needed, handled by Nginx here
+        # policy = '{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":{\"AWS\":[\"*\"]},\"Action\":[\"s3:GetObject\"],\"Resource\":[\"arn:aws:s3:::thumbnails/*\"]}]}'
+        # minio_client.set_bucket_policy("thumbnails", policy)
+
+        # Generate thumbnail using ffmpeg (extract frame at 1 second)
+        ffmpeg_command = [
+            "ffmpeg",
+            "-i", file_path,      # Input video file
+            "-ss", "00:00:01.000", # Seek to 1 second
+            "-vframes", "1",      # Extract one frame
+            "-vf", "scale=320:-1", # Scale width to 320px, maintain aspect ratio
+            thumbnail_path         # Output thumbnail file
+        ]
+        print(f"Running ffmpeg command: {' '.join(ffmpeg_command)}") # Added log
+        subprocess.run(ffmpeg_command, check=True, capture_output=True)
+        print(f"Successfully generated thumbnail {thumbnail_path}") # Added log
+
+        # Upload thumbnail to MinIO
+        minio_client.fput_object("thumbnails", thumbnail_object_name, thumbnail_path)
+        print(f"Successfully uploaded thumbnail {thumbnail_object_name} to MinIO.") # Added log
+
+        # Update video record with thumbnail URL
+        video.thumbnail_url = thumbnail_url
+        print(f"Updating video record {video_id} with thumbnail URL: {thumbnail_url}") # Added log
+
+        # --- End Thumbnail Generation ---
+
+
+        # Update video status in DB (commit includes thumbnail_url update)
         video.status = "completed"
         # TODO: Extract actual video duration using ffprobe/ffmpeg if needed
         # video.duration = get_video_duration(file_path)
         db.commit()
+        print(f"Video record {video_id} updated successfully (status=completed).") # Added log
 
         # Update queue status
         await queue.update_status(upload_id, "completed", {
             "video_id": video_id,
-            "object_name": object_name
+            "object_name": object_name,
+            "thumbnail_url": video.thumbnail_url # Include thumbnail url in status
         })
-
-        # Clean up temporary file
-        if os.path.exists(file_path):
-            os.remove(file_path)
 
     except Exception as e:
         print(f"Error processing upload {upload_id} for video {video_id}: {e}")
-        # Update video status in DB
-        video = db.query(VideoModel).filter(VideoModel.id == video_id).first()
-        if video:
-            video.status = "failed"
-            db.commit()
+        # Update video status in DB if video object exists
+        if db.is_active and video: # Check if session is active and video was fetched
+             video.status = "failed"
+             # Don't nullify thumbnail_url here, keep potential result from thumb step
+             db.commit()
 
         # Update queue status
         await queue.update_status(upload_id, "failed", {"error": str(e)})
 
-        # Clean up temporary file
+    finally:
+        # Clean up temporary files
         if os.path.exists(file_path):
             os.remove(file_path)
-    finally:
-        db.close() # Ensure session is closed in background task
+            print(f"Removed temporary video file: {file_path}") # Added log
+        if 'thumbnail_path' in locals() and os.path.exists(thumbnail_path):
+             os.remove(thumbnail_path)
+             print(f"Removed temporary thumbnail file: {thumbnail_path}") # Added log
+        if db.is_active: # Close session only if it's active
+            db.close()
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000) 

@@ -147,12 +147,12 @@ function AppContent() {
         {videos.map((video) => (
           <Grid item xs={12} sm={6} md={4} key={video.id}>
             <Card>
-              {/* Use the placeholder image */}
+              {/* Use the thumbnail_url if available, otherwise fallback to placeholder */}
               <CardMedia
-                component="img" // Change component type to img
-                sx={{ height: 140 }} // Keep the height or adjust as needed
-                image="/placeholder-thumbnail.png" // Set image source
-                alt={`${video.title} thumbnail`} // Add alt text
+                component="img"
+                sx={{ height: 140, objectFit: 'cover' }} // Added objectFit for better image display
+                image={video.thumbnail_url ? `http://localhost:80${video.thumbnail_url}` : "/placeholder-thumbnail.png"} // Construct full URL using Nginx base
+                alt={`${video.title} thumbnail`} 
               />
               <CardContent>
                 <Typography gutterBottom variant="h5" component="div">

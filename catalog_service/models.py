@@ -19,6 +19,7 @@ class Video(Base):
     node_id = Column(String)  # For replication tracking
     version = Column(Integer, default=1)  # For optimistic locking
     is_deleted = Column(Boolean, default=False)
+    thumbnail_url = Column(String, nullable=True)
 
 class VideoCache(Base):
     __tablename__ = "video_cache"
