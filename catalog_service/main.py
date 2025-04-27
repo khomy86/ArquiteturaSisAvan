@@ -76,7 +76,7 @@ class Video(BaseModel):
     id: Optional[int] = None
     title: str
     description: Optional[str] # Made description optional to match DB
-    duration: Optional[float] # Allow float for duration
+    duration: Optional[float] # Allow float for duration, make optional
     url: str
     status: Optional[str] = "pending"
     thumbnail_url: Optional[str] = None
@@ -236,13 +236,31 @@ async def process_upload(upload_id: str, file_path: str, video_id: int):
         video.thumbnail_url = thumbnail_url
         print(f"Updating video record {video_id} with thumbnail URL: {thumbnail_url}") # Added log
 
-        # --- End Thumbnail Generation ---
+        # --- Get Video Duration --- 
+        try:
+            ffprobe_command = [
+                "ffprobe",
+                "-v", "error",
+                "-show_entries", "format=duration",
+                "-of", "default=noprint_wrappers=1:nokey=1",
+                file_path
+            ]
+            print(f"Running ffprobe command: {' '.join(ffprobe_command)}")
+            result = subprocess.run(ffprobe_command, check=True, capture_output=True, text=True)
+            duration_str = result.stdout.strip()
+            if duration_str:
+                video.duration = float(duration_str)
+                print(f"Extracted duration: {video.duration} seconds")
+            else:
+                print("Warning: ffprobe did not return a duration.")
+                video.duration = 0 # Or None, depending on desired handling
+        except Exception as duration_err:
+            print(f"Error extracting duration for video {video_id}: {duration_err}")
+            video.duration = 0 # Or None
+        # --- End Get Video Duration ---
 
-
-        # Update video status in DB (commit includes thumbnail_url update)
+        # Update video status in DB (commit includes thumbnail_url and duration update)
         video.status = "completed"
-        # TODO: Extract actual video duration using ffprobe/ffmpeg if needed
-        # video.duration = get_video_duration(file_path)
         db.commit()
         print(f"Video record {video_id} updated successfully (status=completed).") # Added log
 

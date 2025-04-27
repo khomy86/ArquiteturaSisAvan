@@ -24,6 +24,21 @@ import {
 import ReactPlayer from 'react-player';
 import axios from 'axios';
 
+// Helper function to format duration (seconds) into HH:MM:SS or MM:SS
+const formatDuration = (seconds) => {
+  if (seconds == null || isNaN(seconds) || seconds <= 0) {
+    return '--:--';
+  }
+  const date = new Date(0);
+  date.setSeconds(seconds);
+  const timeString = date.toISOString().substr(11, 8);
+  // Remove leading hours if zero
+  if (timeString.startsWith('00:')) {
+    return timeString.substr(3);
+  }
+  return timeString;
+};
+
 // Use environment variables or default to localhost:80 (load balancer)
 const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:80/api';
 const STREAMING_BASE_URL = process.env.REACT_APP_STREAMING_URL || 'http://localhost:80/stream';
@@ -146,14 +161,31 @@ function AppContent() {
       <Grid container spacing={3}>
         {videos.map((video) => (
           <Grid item xs={12} sm={6} md={4} key={video.id}>
-            <Card>
+            <Card sx={{ position: 'relative' }}> {/* Added relative positioning for duration */} 
               {/* Use the thumbnail_url if available, otherwise fallback to placeholder */}
               <CardMedia
                 component="img"
-                sx={{ height: 140, objectFit: 'cover' }} // Added objectFit for better image display
-                image={video.thumbnail_url ? `http://localhost:80${video.thumbnail_url}` : "/placeholder-thumbnail.png"} // Construct full URL using Nginx base
+                sx={{ height: 140, objectFit: 'cover' }}
+                image={video.thumbnail_url ? `http://localhost:80${video.thumbnail_url}` : "/placeholder-thumbnail.png"}
                 alt={`${video.title} thumbnail`} 
               />
+              {/* Display Duration */} 
+              {video.duration != null && (
+                <Typography 
+                  sx={{
+                    position: 'absolute',
+                    bottom: 8, // Position near the bottom of the CardMedia
+                    right: 8, 
+                    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+                    color: 'white',
+                    padding: '2px 6px',
+                    borderRadius: '4px',
+                    fontSize: '0.75rem',
+                  }}
+                >
+                  {formatDuration(video.duration)}
+                </Typography>
+              )}
               <CardContent>
                 <Typography gutterBottom variant="h5" component="div">
                   {video.title}
