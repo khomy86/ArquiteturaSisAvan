@@ -147,14 +147,13 @@ function AppContent() {
         {videos.map((video) => (
           <Grid item xs={12} sm={6} md={4} key={video.id}>
             <Card>
-              {/* Basic placeholder thumbnail logic - replace if needed */}
+              {/* Use the placeholder image */}
               <CardMedia
-                component="div" // Use div for background image or a placeholder
-                sx={{ height: 140, backgroundColor: '#eee', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-              >
-                {/* Placeholder icon or text */}
-                <Typography variant="caption">Video Thumbnail</Typography>
-              </CardMedia>
+                component="img" // Change component type to img
+                sx={{ height: 140 }} // Keep the height or adjust as needed
+                image="/placeholder-thumbnail.png" // Set image source
+                alt={`${video.title} thumbnail`} // Add alt text
+              />
               <CardContent>
                 <Typography gutterBottom variant="h5" component="div">
                   {video.title}
