@@ -90,8 +90,48 @@ services:
       - POSTGRES_DB=ualflix
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      # Mount custom pg_hba.conf to allow replication connections
+      - ./postgres_config/pg_hba.conf:/var/lib/postgresql/data/pg_hba.conf
+      # Optional: Mount custom postgresql.conf if needed later
+      # - ./postgres_config/postgresql.conf:/var/lib/postgresql/data/postgresql.conf
     ports:
-      - "5432:5432"
+      - "5432:5432" # Primary DB port
+    # Command to enable replication settings
+    command: postgres -c wal_level=replica -c max_wal_senders=10 -c hot_standby=on
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  db-replica:
+    image: postgres:14
+    environment:
+      # Important: Replica needs PGDATA set explicitly when using init commands
+      - PGDATA=/var/lib/postgresql/data/pgdata_replica
+    volumes:
+      - postgres_replica_data:/var/lib/postgresql/data # Separate volume for replica
+    ports:
+      - "5433:5432" # Expose replica on a different host port
+    depends_on:
+      db:
+        condition: service_healthy # Wait for primary to be healthy
+    # Command to remove initial data, clone from primary, and start standby
+    # Use PGPASSWORD environment variable for pg_basebackup
+    command: >
+      bash -c "echo '>>> Cleaning replica data...' &&
+               rm -rf /var/lib/postgresql/data/pgdata_replica/* &&
+               echo '>>> Starting pg_basebackup...' &&
+               export PGPASSWORD=postgres &&
+               pg_basebackup -h db -U postgres -D /var/lib/postgresql/data/pgdata_replica -Xs -R --no-password --slot=replica_slot &&
+               echo '>>> pg_basebackup finished.' &&
+               unset PGPASSWORD &&
+               echo '>>> Starting replica server as postgres user...' &&
+               chown -R postgres:postgres /var/lib/postgresql/data/pgdata_replica && # Ensure correct ownership
+               su postgres -s /bin/bash -c "/usr/lib/postgresql/14/bin/postgres -D /var/lib/postgresql/data/pgdata_replica -c hot_standby=on"
+      " # Closing quote for bash -c
+    # Note: Assumes primary postgres user has replication privileges and slot exists.
+    # Primary needs: Adjust pg_hba.conf if necessary for password auth from replica IP.
 
   redis:
     image: redis:7
@@ -131,6 +171,7 @@ services:
 
 volumes:
   postgres_data:
+  postgres_replica_data: # Add volume for replica
   redis_data:
   minio_data:
   video_storage:
