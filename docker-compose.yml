@@ -169,6 +169,24 @@ services:
     depends_on:
       - prometheus
 
+  admin_panel:
+    build:
+      context: .
+      dockerfile: docker/admin_panel.Dockerfile
+    # Optional: Expose a different host port if needed, e.g., 3002
+    # ports:
+    #   - "3002:3000"
+    # Environment variables for the admin panel (e.g., API URL if different)
+    environment:
+      - REACT_APP_API_URL=http://localhost/api # Reuse existing API endpoint
+      - WATCHPACK_POLLING=true # Useful for development volume mounting
+    # Optional: Mount volumes for development (like the web service)
+    # volumes:
+    #   - ./admin_panel:/app
+    #   - /app/node_modules
+    depends_on:
+      - loadbalancer # Depends on Nginx to be accessible
+
 volumes:
   postgres_data:
   postgres_replica_data: # Add volume for replica

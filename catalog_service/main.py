@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, UploadFile, File, BackgroundTasks, Form, Depends
+from fastapi import FastAPI, HTTPException, UploadFile, File, BackgroundTasks, Form, Depends, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Optional
@@ -13,6 +13,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, Session
 from .models import Base, Video as VideoModel # Rename imported Video to avoid conflict
 import subprocess # Add subprocess import at the top
+from datetime import datetime
 
 app = FastAPI(title="UALFlix Catalog Service")
 
@@ -65,18 +66,26 @@ try:
 except Exception as e:
     print(f"Error during MinIO bucket setup/policy application: {e}")
 
-# Pydantic model for request/response (unchanged)
+# Pydantic model for video update request
+class VideoUpdate(BaseModel):
+    title: Optional[str] = None
+    description: Optional[str] = None
+
+# Pydantic model for video response (existing, ensure thumbnail_url is there)
 class Video(BaseModel):
     id: Optional[int] = None
     title: str
-    description: str
-    duration: int  # in seconds
+    description: Optional[str] # Made description optional to match DB
+    duration: Optional[float] # Allow float for duration
     url: str
     status: Optional[str] = "pending"
     thumbnail_url: Optional[str] = None
+    created_at: Optional[datetime] = None # Add timestamp fields
+    updated_at: Optional[datetime] = None
+    is_deleted: Optional[bool] = False # Add is_deleted
 
     class Config:
-        from_attributes = True # Enable ORM mode for mapping SQLAlchemy models (formerly orm_mode)
+        from_attributes = True # Enable ORM mode
 
 # New response model for upload endpoint
 class UploadResponse(Video):
@@ -90,14 +99,17 @@ async def root():
     return {"message": "Welcome to UALFlix Catalog Service"}
 
 @app.get("/videos", response_model=List[Video])
-async def get_videos(db: Session = Depends(get_db)):
+async def get_videos(include_deleted: bool = False, db: Session = Depends(get_db)):
     # Query database for videos
-    db_videos = db.query(VideoModel).filter(VideoModel.is_deleted == False).all()
+    query = db.query(VideoModel)
+    if not include_deleted:
+        query = query.filter(VideoModel.is_deleted == False)
+    db_videos = query.all()
     return db_videos
 
 @app.get("/videos/{video_id}", response_model=Video)
 async def get_video(video_id: int, db: Session = Depends(get_db)):
-    # Query database for specific video
+    # Query database for specific video (non-deleted only for regular users)
     db_video = db.query(VideoModel).filter(VideoModel.id == video_id, VideoModel.is_deleted == False).first()
     if db_video is None:
         raise HTTPException(status_code=404, detail="Video not found")
@@ -262,6 +274,58 @@ async def process_upload(upload_id: str, file_path: str, video_id: int):
              print(f"Removed temporary thumbnail file: {thumbnail_path}") # Added log
         if db.is_active: # Close session only if it's active
             db.close()
+
+# --- Admin Endpoints --- 
+
+@app.put("/videos/{video_id}", response_model=Video)
+async def update_video(
+    video_id: int,
+    video_update: VideoUpdate,
+    db: Session = Depends(get_db)
+):
+    db_video = db.query(VideoModel).filter(VideoModel.id == video_id).first()
+    if db_video is None:
+        raise HTTPException(status_code=404, detail="Video not found")
+
+    update_data = video_update.model_dump(exclude_unset=True) # Use model_dump for Pydantic v2
+    for key, value in update_data.items():
+        setattr(db_video, key, value)
+
+    db.commit()
+    db.refresh(db_video)
+    return db_video
+
+@app.delete("/videos/{video_id}", status_code=204)
+async def delete_video(video_id: int, db: Session = Depends(get_db)):
+    db_video = db.query(VideoModel).filter(VideoModel.id == video_id).first()
+    if db_video is None:
+        raise HTTPException(status_code=404, detail="Video not found")
+
+    # --- MinIO Object Deletion --- 
+    video_object_name = f"{video_id}.mp4"
+    thumbnail_object_name = f"{video_id}.jpg"
+
+    try:
+        minio_client.remove_object("videos", video_object_name)
+        print(f"Successfully removed video object {video_object_name} from MinIO.")
+    except Exception as e:
+        # Log error but continue with DB soft delete
+        print(f"Error removing video object {video_object_name} from MinIO: {e}")
+
+    try:
+        minio_client.remove_object("thumbnails", thumbnail_object_name)
+        print(f"Successfully removed thumbnail object {thumbnail_object_name} from MinIO.")
+    except Exception as e:
+        # Log error but continue with DB soft delete
+        print(f"Error removing thumbnail object {thumbnail_object_name} from MinIO: {e}")
+    # --- End MinIO Object Deletion ---
+
+    # Soft delete in DB
+    db_video.is_deleted = True
+    db.commit()
+    return Response(status_code=204) # Return No Content response
+
+# --- End Admin Endpoints ---
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000) 

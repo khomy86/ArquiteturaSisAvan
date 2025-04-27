@@ -1,0 +1,25 @@
+# Dependencies
+node_modules/
+admin_panel/node_modules/ # Explicitly ignore admin panel node_modules
+
+# Build directories
+web/build/
+admin_panel/build/
+
+# Log files
+*.log
+
+# Environment variables
+.env*
+!/.env.example
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# IDE specific files
+.idea/
+.vscode/
+
+# Docker / Temporary files
+/tmp/ # If used for uploads/thumbnails temporarily outside docker 
