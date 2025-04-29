@@ -1,5 +1,5 @@
-# Use an official Node runtime as a parent image
-FROM node:18-alpine
+# Stage 1: Build the React app
+FROM node:18-alpine AS builder
 
 # Set the working directory in the container
 WORKDIR /app
@@ -17,8 +17,16 @@ COPY admin_panel/ .
 # Build the React app for production
 RUN npm run build
 
+# Stage 2: Serve the static files
+FROM node:18-alpine
+
+WORKDIR /app
+
 # Install `serve` to run the static build
 RUN npm install -g serve
+
+# Copy the build output from the builder stage
+COPY --from=builder /app/build ./build
 
 # Expose the port the app runs on (serve defaults to 3000)
 EXPOSE 3000
