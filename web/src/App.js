@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { BrowserRouter as Router, Routes, Route, useNavigate, useParams, Link as RouterLink } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, useNavigate, useParams, Link as RouterLink, useMatch } from 'react-router-dom';
 import {
   AppBar,
   Toolbar,
@@ -59,6 +59,9 @@ function AppContent() {
   const [uploadStatus, setUploadStatus] = useState(null);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'info' });
+
+  // Check if the current route is the video player page
+  const isVideoPlayerPage = useMatch("/video/:videoId");
 
   const [newVideo, setNewVideo] = useState({
     title: '',
@@ -288,7 +291,7 @@ function AppContent() {
                UALFlix
              </Link>
            </Typography>
-           <Button color="inherit" onClick={() => setUploadDialogOpen(true)}>
+           <Button color="inherit" onClick={() => setUploadDialogOpen(true)} disabled={!!isVideoPlayerPage}>
              Upload Video
            </Button>
          </Toolbar>
