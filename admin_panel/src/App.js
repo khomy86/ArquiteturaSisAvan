@@ -29,6 +29,7 @@ import {
 } from '@mui/material';
 import EditIcon from '@mui/icons-material/Edit';
 import DeleteIcon from '@mui/icons-material/Delete';
+import DeleteForeverIcon from '@mui/icons-material/DeleteForever';
 
 // Use environment variable or default
 const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost/api';
@@ -179,6 +180,21 @@ const AdminVideoList = () => {
     }
   };
 
+  const handleDeletePermanently = async (videoId) => {
+    if (window.confirm(`Are you sure you want to permanently delete video ID: ${videoId}? This action cannot be undone.`)) {
+      setLoading(true);
+      try {
+        await axios.delete(`${API_BASE_URL}/videos/${videoId}?permanent=true`);
+        await fetchVideos(); // Refresh list
+      } catch (err) {
+        console.error('Error permanently deleting video:', err);
+        setError('Failed to permanently delete video. Please try again.');
+        setLoading(false); // Ensure loading is stopped on error
+      }
+      // fetchVideos will set loading to false on success
+    }
+  };
+
   if (loading) {
     return (
       <Box sx={{ display: 'flex', justifyContent: 'center', mt: 4 }}>
@@ -224,7 +240,7 @@ const AdminVideoList = () => {
                 <TableCell align="right">
                   <Tooltip title="Edit">
                     <span>
-                      <IconButton 
+                      <IconButton
                         onClick={() => handleEdit(video)}
                         disabled={video.is_deleted}
                         size="small"
@@ -233,18 +249,33 @@ const AdminVideoList = () => {
                       </IconButton>
                     </span>
                   </Tooltip>
-                  <Tooltip title={video.is_deleted ? "Restore (Not Implemented)" : "Delete"}>
-                     <span>
-                      <IconButton 
-                        onClick={() => handleDelete(video.id)} 
-                        color={video.is_deleted ? "default" : "error"}
-                        size="small"
-                      >
-                        {/* TODO: Change icon/action for restoring */} 
-                        <DeleteIcon fontSize="small" /> 
-                      </IconButton>
-                    </span>
-                  </Tooltip>
+                  {video.is_deleted ? (
+                    <>
+                      <Tooltip title="Delete Forever">
+                        <span>
+                          <IconButton
+                            onClick={() => handleDeletePermanently(video.id)}
+                            color="error"
+                            size="small"
+                          >
+                            <DeleteForeverIcon fontSize="small" />
+                          </IconButton>
+                        </span>
+                      </Tooltip>
+                    </>
+                  ) : (
+                    <Tooltip title="Delete">
+                      <span>
+                        <IconButton
+                          onClick={() => handleDelete(video.id)}
+                          color="error"
+                          size="small"
+                        >
+                          <DeleteIcon fontSize="small" />
+                        </IconButton>
+                      </span>
+                    </Tooltip>
+                  )}
                 </TableCell>
               </TableRow>
             ))}

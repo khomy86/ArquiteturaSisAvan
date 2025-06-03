@@ -320,32 +320,51 @@ async def update_video(
     return db_video
 
 @app.delete("/videos/{video_id}", status_code=204)
-async def delete_video(video_id: int, db: Session = Depends(get_db)):
+async def delete_video(video_id: int, permanent: bool = False, db: Session = Depends(get_db)):
     db_video = db.query(VideoModel).filter(VideoModel.id == video_id).first()
     if db_video is None:
         raise HTTPException(status_code=404, detail="Video not found")
 
-    # --- MinIO Object Deletion --- 
+    # --- MinIO Object Deletion ---
     video_object_name = f"{video_id}.mp4"
     thumbnail_object_name = f"{video_id}.jpg"
 
-    try:
-        minio_client.remove_object("videos", video_object_name)
-        print(f"Successfully removed video object {video_object_name} from MinIO.")
-    except Exception as e:
-        # Log error but continue with DB soft delete
-        print(f"Error removing video object {video_object_name} from MinIO: {e}")
+    if permanent: # Always try to delete from MinIO if permanent delete
+        try:
+            minio_client.remove_object("videos", video_object_name)
+            print(f"Successfully removed video object {video_object_name} from MinIO for permanent delete.")
+        except Exception as e:
+            # Log error, but if permanent, we will still try to delete from DB
+            print(f"Error removing video object {video_object_name} from MinIO during permanent delete: {e}")
 
-    try:
-        minio_client.remove_object("thumbnails", thumbnail_object_name)
-        print(f"Successfully removed thumbnail object {thumbnail_object_name} from MinIO.")
-    except Exception as e:
-        # Log error but continue with DB soft delete
-        print(f"Error removing thumbnail object {thumbnail_object_name} from MinIO: {e}")
+        try:
+            minio_client.remove_object("thumbnails", thumbnail_object_name)
+            print(f"Successfully removed thumbnail object {thumbnail_object_name} from MinIO for permanent delete.")
+        except Exception as e:
+            # Log error, but if permanent, we will still try to delete from DB
+            print(f"Error removing thumbnail object {thumbnail_object_name} from MinIO during permanent delete: {e}")
+    else: # Soft delete, attempt MinIO deletion but don't fail hard if it's already gone or error occurs
+        try:
+            minio_client.remove_object("videos", video_object_name)
+            print(f"Successfully removed video object {video_object_name} from MinIO during soft delete.")
+        except Exception as e:
+            print(f"Error removing video object {video_object_name} from MinIO during soft delete (may already be removed or other issue): {e}")
+
+        try:
+            minio_client.remove_object("thumbnails", thumbnail_object_name)
+            print(f"Successfully removed thumbnail object {thumbnail_object_name} from MinIO during soft delete.")
+        except Exception as e:
+            print(f"Error removing thumbnail object {thumbnail_object_name} from MinIO during soft delete (may already be removed or other issue): {e}")
     # --- End MinIO Object Deletion ---
 
-    # Soft delete in DB
-    db_video.is_deleted = True
+    if permanent:
+        db.delete(db_video)
+        print(f"Permanently deleted video record {video_id} from database.")
+    else:
+        # Soft delete in DB
+        db_video.is_deleted = True
+        print(f"Soft deleted video record {video_id} in database.")
+
     db.commit()
     return Response(status_code=204) # Return No Content response
 
