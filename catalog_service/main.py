@@ -15,13 +15,7 @@ from .models import Base, Video as VideoModel # Rename imported Video to avoid c
 import subprocess # Add subprocess import at the top
 from datetime import datetime
 
-# Add Prometheus Instrumentator
-from prometheus_fastapi_instrumentator import PrometheusFastApiInstrumentator
-
 app = FastAPI(title="UALFlix Catalog Service")
-
-# Instrument the app with Prometheus
-PrometheusFastApiInstrumentator().instrument(app).expose(app)
 
 # Database setup
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://postgres:postgres@db:5432/ualflix")

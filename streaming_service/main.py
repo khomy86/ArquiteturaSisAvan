@@ -8,13 +8,7 @@ import mimetypes
 from minio import Minio
 import io
 
-# Add Prometheus Instrumentator
-from prometheus_fastapi_instrumentator import PrometheusFastApiInstrumentator
-
 app = FastAPI(title="UALFlix Streaming Service")
-
-# Instrument the app with Prometheus
-PrometheusFastApiInstrumentator().instrument(app).expose(app)
 
 # Enable CORS
 app.add_middleware(
