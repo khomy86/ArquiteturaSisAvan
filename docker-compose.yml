@@ -28,6 +28,7 @@ services:
     build:
       context: .
       dockerfile: docker/catalog_service.Dockerfile
+    container_name: catalog-service-1
     environment:
       - DATABASE_URL=postgresql://postgres:postgres@db:5432/ualflix
       - REDIS_URL=redis://redis:6379
@@ -40,6 +41,7 @@ services:
     build:
       context: .
       dockerfile: docker/catalog_service.Dockerfile
+    container_name: catalog-service-2
     environment:
       - DATABASE_URL=postgresql://postgres:postgres@db:5432/ualflix
       - REDIS_URL=redis://redis:6379
@@ -52,6 +54,7 @@ services:
     build:
       context: .
       dockerfile: docker/streaming_service.Dockerfile
+    container_name: streaming-service-1
     environment:
       - MINIO_ENDPOINT=minio:9000
       - MINIO_ACCESS_KEY=minioadmin
@@ -66,6 +69,7 @@ services:
     build:
       context: .
       dockerfile: docker/streaming_service.Dockerfile
+    container_name: streaming-service-2
     environment:
       - MINIO_ENDPOINT=minio:9000
       - MINIO_ACCESS_KEY=minioadmin
@@ -91,15 +95,26 @@ services:
     ports:
       - "5432:5432" # Primary DB port
     # Command to enable replication settings
-    command: postgres -c wal_level=replica -c max_wal_senders=10 -c hot_standby=on
+    command:
+      - "bash"
+      - "-c"
+      - |
+        chown -R postgres:postgres /var/lib/postgresql/data
+        gosu postgres bash -c "
+        postgres -c wal_level=replica -c max_wal_senders=10 -c hot_standby=on &
+        sleep 10
+        echo '>>> Creating replication slots...'
+        psql -U postgres -d ualflix -c \"SELECT pg_create_physical_replication_slot('replica_slot');\" || true
+        psql -U postgres -d ualflix -c \"SELECT pg_create_physical_replication_slot('replica_slot_2');\" || true
+        wait
+        "
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 10s
-      timeout: 5s
-      retries: 5
 
-  db-replica:
+  db-replica-1:
     image: postgres:14
+    container_name: db-replica-1
     environment:
       # Important: Replica needs PGDATA set explicitly when using init commands
       - PGDATA=/var/lib/postgresql/data/pgdata_replica
@@ -126,6 +141,34 @@ services:
       " # Closing quote for bash -c
     # Note: Assumes primary postgres user has replication privileges and slot exists.
     # Primary needs: Adjust pg_hba.conf if necessary for password auth from replica IP.
+
+  db-replica-2:
+    image: postgres:14
+    container_name: db-replica-2
+    environment:
+      # Important: Replica needs PGDATA set explicitly when using init commands
+      - PGDATA=/var/lib/postgresql/data/pgdata_replica_2
+    volumes:
+      - postgres_replica_2_data:/var/lib/postgresql/data # Separate volume for replica 2
+    ports:
+      - "5434:5432" # Expose replica 2 on a different host port
+    depends_on:
+      db:
+        condition: service_healthy # Wait for primary to be healthy
+    # Command to remove initial data, clone from primary, and start standby
+    # Use PGPASSWORD environment variable for pg_basebackup
+    command: >
+      bash -c "echo '>>> Cleaning replica 2 data...' &&
+               rm -rf /var/lib/postgresql/data/pgdata_replica_2/* &&
+               echo '>>> Starting pg_basebackup for replica 2...' &&
+               export PGPASSWORD=postgres &&
+               pg_basebackup -h db -U postgres -D /var/lib/postgresql/data/pgdata_replica_2 -Xs -R --no-password --slot=replica_slot_2 &&
+               echo '>>> pg_basebackup for replica 2 finished.' &&
+               unset PGPASSWORD &&
+               echo '>>> Starting replica 2 server as postgres user...' &&
+               chown -R postgres:postgres /var/lib/postgresql/data/pgdata_replica_2 && # Ensure correct ownership
+               su postgres -s /bin/bash -c "/usr/lib/postgresql/14/bin/postgres -D /var/lib/postgresql/data/pgdata_replica_2 -c hot_standby=on"
+      " # Closing quote for bash -c
 
   redis:
     image: redis:7
@@ -169,6 +212,7 @@ services:
 volumes:
   postgres_data:
   postgres_replica_data: # Add volume for replica
+  postgres_replica_2_data:
   redis_data:
   minio_data:
   video_storage: 
