@@ -1,0 +1,70 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: "**/requirements*.txt"
+      - run: pip install -r requirements-dev.txt
+      - run: pytest -q
+
+  migrations:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: ualflix
+          POSTGRES_PASSWORD: ualflix
+          POSTGRES_DB: ualflix
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ualflix"
+          --health-interval 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://ualflix:ualflix@localhost:5432/ualflix
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: "**/requirements*.txt"
+      - run: pip install -r catalog_service/requirements.txt
+      - name: Upgrade, check the models match, and downgrade
+        run: |
+          alembic -c catalog_service/alembic.ini upgrade head
+          alembic -c catalog_service/alembic.ini check
+          alembic -c catalog_service/alembic.ini downgrade base
+
+  frontend:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        app: [web, admin_panel]
+    defaults:
+      run:
+        working-directory: ${{ matrix.app }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: ${{ matrix.app }}/package-lock.json
+      - run: npm ci
+      - run: npm run build
+        env:
+          CI: true
