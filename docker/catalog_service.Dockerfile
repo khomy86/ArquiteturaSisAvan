@@ -1,23 +1,21 @@
-FROM python:3.8-slim
+FROM docker.io/library/python:3.13-slim
 
-WORKDIR /app
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    libpq-dev \
-    ffmpeg \
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements first to leverage Docker cache
-COPY requirements.txt .
+WORKDIR /app
+COPY catalog_service/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy the rest of the application
 COPY catalog_service/ ./catalog_service/
 
-# Expose the port the app runs on
-EXPOSE 8000
+RUN useradd --system --no-create-home app
+USER app
 
-# Command to run the application
-CMD ["uvicorn", "catalog_service.main:app", "--host", "0.0.0.0", "--port", "8000"] 
+EXPOSE 8000
+CMD ["uvicorn", "catalog_service.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers", "--forwarded-allow-ips", "*", \
+     "--timeout-graceful-shutdown", "5"]

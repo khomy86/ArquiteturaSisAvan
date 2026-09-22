@@ -1,44 +1,35 @@
-from sqlalchemy import Column, Integer, String, Float, Boolean, DateTime
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.sql import func
-import uuid
+from datetime import datetime
 
-Base = declarative_base()
+from sqlalchemy import DateTime, String, Text, func
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+
+
+class Base(DeclarativeBase):
+    pass
+
 
 class Video(Base):
     __tablename__ = "videos"
 
-    id = Column(Integer, primary_key=True)
-    title = Column(String, nullable=False)
-    description = Column(String)
-    duration = Column(Float)  # in seconds
-    url = Column(String, nullable=False)
-    status = Column(String, default="pending")
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
-    node_id = Column(String)  # For replication tracking
-    version = Column(Integer, default=1)  # For optimistic locking
-    is_deleted = Column(Boolean, default=False)
-    thumbnail_url = Column(String, nullable=True)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    title: Mapped[str] = mapped_column(String(200))
+    description: Mapped[str] = mapped_column(Text, default="")
+    duration: Mapped[float | None]  # seconds, filled in once processing finishes
+    status: Mapped[str] = mapped_column(String(20), default="pending")
+    thumbnail_url: Mapped[str | None] = mapped_column(String(255))
+    is_deleted: Mapped[bool] = mapped_column(default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), onupdate=func.now())
 
-class VideoCache(Base):
-    __tablename__ = "video_cache"
+    @property
+    def url(self) -> str:
+        return f"/stream/{self.id}"
 
-    id = Column(Integer, primary_key=True)
-    video_id = Column(Integer, nullable=False)
-    views = Column(Integer, default=0)
-    last_accessed = Column(DateTime(timezone=True), server_default=func.now())
-    is_cached = Column(Boolean, default=False)
-    cache_location = Column(String)  # URL or path to cached content
 
-class ReplicationLog(Base):
-    __tablename__ = "replication_log"
+class AdminUser(Base):
+    __tablename__ = "admin_users"
 
-    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
-    operation = Column(String, nullable=False)  # 'create', 'update', 'delete'
-    table_name = Column(String, nullable=False)
-    record_id = Column(Integer, nullable=False)
-    data = Column(String)  # JSON string of the record
-    timestamp = Column(DateTime(timezone=True), server_default=func.now())
-    source_node = Column(String, nullable=False)
-    status = Column(String, default="pending")  # 'pending', 'completed', 'failed' 
+    id: Mapped[int] = mapped_column(primary_key=True)
+    username: Mapped[str] = mapped_column(String(64), unique=True)
+    password_hash: Mapped[str] = mapped_column(String(255))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

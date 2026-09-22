@@ -1,0 +1,10 @@
+fastapi==0.141.1
+uvicorn==0.53.0
+sqlalchemy==2.0.54
+alembic==1.20.0
+psycopg2-binary==2.9.13
+redis==8.1.0
+minio==7.2.20
+python-multipart==0.0.32
+pyjwt==2.14.0
+pwdlib[argon2]==0.3.1
