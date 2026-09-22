@@ -1,0 +1,115 @@
+# Rendered into /etc/nginx/conf.d/ by the nginx image's entrypoint.
+# NGINX_LOCAL_RESOLVERS is filled in from the container's /etc/resolv.conf, which
+# works with both Docker's and Podman's embedded DNS. Resolving at runtime (the
+# `resolve` flag below) means nginx picks up containers that start late or come
+# back with a new IP after a restart.
+resolver ${NGINX_LOCAL_RESOLVERS} valid=10s ipv6=off;
+
+# Per-client rate limits for the two endpoints worth abusing: uploads (disk,
+# bandwidth and ffmpeg time) and login (password guessing).
+limit_req_zone $binary_remote_addr zone=uploads:10m rate=10r/m;
+limit_req_zone $binary_remote_addr zone=login:10m rate=10r/m;
+limit_req_status 429;
+
+upstream catalog {
+    zone catalog 64k;
+    server catalog-service-1:8000 resolve;
+    server catalog-service-2:8000 resolve;
+}
+
+upstream streaming {
+    zone streaming 64k;
+    server streaming-service-1:8001 resolve;
+    server streaming-service-2:8001 resolve;
+}
+
+upstream minio {
+    zone minio 64k;
+    server minio:9000 resolve;
+}
+
+upstream web {
+    zone web 64k;
+    server web:80 resolve;
+}
+
+upstream admin_panel {
+    zone admin_panel 64k;
+    server admin_panel:80 resolve;
+}
+
+server {
+    listen 80;
+    client_max_body_size 500m;
+    # Relative Location headers, so redirects keep whatever host port was published.
+    absolute_redirect off;
+
+    # Connecting to another container should take milliseconds. If it doesn't,
+    # that instance is down: give up quickly and let nginx try the other one
+    # (for idempotent requests) instead of waiting out the 60s default.
+    proxy_connect_timeout 2s;
+
+    proxy_http_version 1.1;
+    proxy_set_header Connection "";
+    proxy_set_header Host $http_host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+
+    location = /health {
+        default_type text/plain;
+        return 200 "ok\n";
+    }
+
+    # Catalog API. The /api prefix is stripped before the request is forwarded.
+    location /api/ {
+        proxy_pass http://catalog/;
+        # Long enough for server-sent events between keep-alive pings.
+        proxy_read_timeout 300s;
+    }
+
+    location = /api/videos/upload {
+        limit_req zone=uploads burst=5 nodelay;
+        proxy_pass http://catalog/videos/upload;
+        # Pass uploads through as they arrive instead of spooling them to disk first.
+        proxy_request_buffering off;
+        proxy_read_timeout 300s;
+        proxy_send_timeout 300s;
+    }
+
+    location = /api/auth/login {
+        limit_req zone=login burst=5 nodelay;
+        proxy_pass http://catalog/auth/login;
+    }
+
+    # Same shape as the API's own errors, so the front ends can show the message.
+    error_page 429 = @too_many_requests;
+    location @too_many_requests {
+        default_type application/json;
+        return 429 '{"detail": "Too many requests. Please wait a minute and try again."}';
+    }
+
+    location /stream/ {
+        proxy_pass http://streaming;
+        proxy_buffering off;
+    }
+
+    # Thumbnails come straight from the public-read MinIO bucket.
+    location /thumbnails/ {
+        proxy_pass http://minio;
+        proxy_set_header Host minio:9000;
+        expires 1h;
+    }
+
+    location = /admin {
+        return 301 /admin/;
+    }
+
+    location /admin/ {
+        proxy_pass http://admin_panel/;
+    }
+
+    location / {
+        proxy_pass http://web;
+    }
+}

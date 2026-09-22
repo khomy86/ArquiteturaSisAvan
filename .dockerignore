@@ -1,40 +1,12 @@
-# Git files
 .git
-.gitignore
-.gitattributes
-
-# Python cache files
-__pycache__/
-*.pyc
-*.pyo
-*.pyd
-
-# Node.js dependencies
-node_modules/
-npm-debug.log*
-yarn-error.log
-
-# Build artifacts / logs
-build/
-dist/
-*.log
-
-# Environment variables
+.github
 .env
 .env.*
-!.env.example
-
-# OS generated files
-.DS_Store
-Thumbs.db
-
-# Docker specific files
-Dockerfile*
-docker-compose.yml
-
-# Tests
-tests/
-
-# IDE specific
-.vscode/
-.idea/ 
+**/node_modules
+**/build
+**/__pycache__
+**/*.pyc
+.venv
+venv
+tests
+*.log

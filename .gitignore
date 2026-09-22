@@ -1,25 +1,26 @@
 # Dependencies
 node_modules/
-admin_panel/node_modules/ # Explicitly ignore admin panel node_modules
 
-# Build directories
-web/build/
-admin_panel/build/
+# Build output
+build/
 
-# Log files
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Logs
 *.log
 
-# Environment variables
-.env*
-!/.env.example
-
-# OS generated files
+# OS / editor
 .DS_Store
 Thumbs.db
-
-# IDE specific files
 .idea/
 .vscode/
-
-# Docker / Temporary files
-/tmp/ # If used for uploads/thumbnails temporarily outside docker 

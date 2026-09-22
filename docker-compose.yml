@@ -1,218 +1,155 @@
-services:
-  web:
-    build:
-      context: .
-      dockerfile: docker/web.Dockerfile
-    ports:
-      - "3000:3000"
-    environment:
-      - REACT_APP_API_URL=http://localhost/api
-      - REACT_APP_STREAMING_URL=http://localhost/stream
-      - WATCHPACK_POLLING=true
-    depends_on:
-      - loadbalancer
+x-catalog-service: &catalog-service
+  build:
+    context: .
+    dockerfile: docker/catalog_service.Dockerfile
+  image: localhost/ualflix-catalog:latest
+  environment:
+    DATABASE_URL: postgresql://ualflix:${POSTGRES_PASSWORD:-ualflix}@db:5432/ualflix
+    REDIS_URL: redis://redis:6379
+    MINIO_ENDPOINT: minio:9000
+    MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:-minioadmin}
+    MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
+    JWT_SECRET: ${JWT_SECRET:-dev-only-secret-change-me-in-the-env-file}
+    ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+    ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin}
+    ROOT_PATH: /api
+  depends_on:
+    db:
+      condition: service_healthy
+    redis:
+      condition: service_started
+    minio:
+      condition: service_started
+  restart: unless-stopped
 
+x-streaming-service: &streaming-service
+  build:
+    context: .
+    dockerfile: docker/streaming_service.Dockerfile
+  image: localhost/ualflix-streaming:latest
+  environment:
+    MINIO_ENDPOINT: minio:9000
+    MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:-minioadmin}
+    MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
+  depends_on:
+    - minio
+  restart: unless-stopped
+
+x-db-replica: &db-replica
+  image: docker.io/library/postgres:16
+  entrypoint: ["bash", "/usr/local/bin/replica-entrypoint.sh"]
+  depends_on:
+    db:
+      condition: service_healthy
+  restart: unless-stopped
+
+services:
   loadbalancer:
-    image: nginx:alpine
+    image: docker.io/library/nginx:1.28-alpine
+    # nginx's default SIGQUIT waits for open connections to finish, and the
+    # server-sent event streams never do. SIGTERM closes them straight away;
+    # browsers reconnect on their own.
+    stop_signal: SIGTERM
     ports:
-      - "80:80"
+      - "${HTTP_PORT:-8080}:80"
+    environment:
+      NGINX_ENTRYPOINT_LOCAL_RESOLVERS: "1"
     volumes:
-      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/default.conf.template:/etc/nginx/templates/default.conf.template:ro,z
     depends_on:
+      - web
+      - admin_panel
       - catalog-service-1
       - catalog-service-2
       - streaming-service-1
       - streaming-service-2
+    restart: unless-stopped
 
-  catalog-service-1:
+  web:
     build:
       context: .
-      dockerfile: docker/catalog_service.Dockerfile
-    container_name: catalog-service-1
-    environment:
-      - DATABASE_URL=postgresql://postgres:postgres@db:5432/ualflix
-      - REDIS_URL=redis://redis:6379
-      - NODE_ID=1
-    depends_on:
-      - db
-      - redis
-
-  catalog-service-2:
-    build:
-      context: .
-      dockerfile: docker/catalog_service.Dockerfile
-    container_name: catalog-service-2
-    environment:
-      - DATABASE_URL=postgresql://postgres:postgres@db:5432/ualflix
-      - REDIS_URL=redis://redis:6379
-      - NODE_ID=2
-    depends_on:
-      - db
-      - redis
-
-  streaming-service-1:
-    build:
-      context: .
-      dockerfile: docker/streaming_service.Dockerfile
-    container_name: streaming-service-1
-    environment:
-      - MINIO_ENDPOINT=minio:9000
-      - MINIO_ACCESS_KEY=minioadmin
-      - MINIO_SECRET_KEY=minioadmin
-      - NODE_ID=1
-    volumes:
-      - video_storage:/app/videos
-    depends_on:
-      - minio
-
-  streaming-service-2:
-    build:
-      context: .
-      dockerfile: docker/streaming_service.Dockerfile
-    container_name: streaming-service-2
-    environment:
-      - MINIO_ENDPOINT=minio:9000
-      - MINIO_ACCESS_KEY=minioadmin
-      - MINIO_SECRET_KEY=minioadmin
-      - NODE_ID=2
-    volumes:
-      - video_storage:/app/videos
-    depends_on:
-      - minio
-
-  db:
-    image: postgres:14
-    environment:
-      - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=postgres
-      - POSTGRES_DB=ualflix
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-      # Mount custom pg_hba.conf to allow replication connections
-      - ./postgres_config/pg_hba.conf:/var/lib/postgresql/data/pg_hba.conf
-      # Optional: Mount custom postgresql.conf if needed later
-      # - ./postgres_config/postgresql.conf:/var/lib/postgresql/data/postgresql.conf
-    ports:
-      - "5432:5432" # Primary DB port
-    # Command to enable replication settings
-    command:
-      - "bash"
-      - "-c"
-      - |
-        chown -R postgres:postgres /var/lib/postgresql/data
-        gosu postgres bash -c "
-        postgres -c wal_level=replica -c max_wal_senders=10 -c hot_standby=on &
-        sleep 10
-        echo '>>> Creating replication slots...'
-        psql -U postgres -d ualflix -c \"SELECT pg_create_physical_replication_slot('replica_slot');\" || true
-        psql -U postgres -d ualflix -c \"SELECT pg_create_physical_replication_slot('replica_slot_2');\" || true
-        wait
-        "
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
-      interval: 10s
-
-  db-replica-1:
-    image: postgres:14
-    container_name: db-replica-1
-    environment:
-      # Important: Replica needs PGDATA set explicitly when using init commands
-      - PGDATA=/var/lib/postgresql/data/pgdata_replica
-    volumes:
-      - postgres_replica_data:/var/lib/postgresql/data # Separate volume for replica
-    ports:
-      - "5433:5432" # Expose replica on a different host port
-    depends_on:
-      db:
-        condition: service_healthy # Wait for primary to be healthy
-    # Command to remove initial data, clone from primary, and start standby
-    # Use PGPASSWORD environment variable for pg_basebackup
-    command: >
-      bash -c "echo '>>> Cleaning replica data...' &&
-               rm -rf /var/lib/postgresql/data/pgdata_replica/* &&
-               echo '>>> Starting pg_basebackup...' &&
-               export PGPASSWORD=postgres &&
-               pg_basebackup -h db -U postgres -D /var/lib/postgresql/data/pgdata_replica -Xs -R --no-password --slot=replica_slot &&
-               echo '>>> pg_basebackup finished.' &&
-               unset PGPASSWORD &&
-               echo '>>> Starting replica server as postgres user...' &&
-               chown -R postgres:postgres /var/lib/postgresql/data/pgdata_replica && # Ensure correct ownership
-               su postgres -s /bin/bash -c "/usr/lib/postgresql/14/bin/postgres -D /var/lib/postgresql/data/pgdata_replica -c hot_standby=on"
-      " # Closing quote for bash -c
-    # Note: Assumes primary postgres user has replication privileges and slot exists.
-    # Primary needs: Adjust pg_hba.conf if necessary for password auth from replica IP.
-
-  db-replica-2:
-    image: postgres:14
-    container_name: db-replica-2
-    environment:
-      # Important: Replica needs PGDATA set explicitly when using init commands
-      - PGDATA=/var/lib/postgresql/data/pgdata_replica_2
-    volumes:
-      - postgres_replica_2_data:/var/lib/postgresql/data # Separate volume for replica 2
-    ports:
-      - "5434:5432" # Expose replica 2 on a different host port
-    depends_on:
-      db:
-        condition: service_healthy # Wait for primary to be healthy
-    # Command to remove initial data, clone from primary, and start standby
-    # Use PGPASSWORD environment variable for pg_basebackup
-    command: >
-      bash -c "echo '>>> Cleaning replica 2 data...' &&
-               rm -rf /var/lib/postgresql/data/pgdata_replica_2/* &&
-               echo '>>> Starting pg_basebackup for replica 2...' &&
-               export PGPASSWORD=postgres &&
-               pg_basebackup -h db -U postgres -D /var/lib/postgresql/data/pgdata_replica_2 -Xs -R --no-password --slot=replica_slot_2 &&
-               echo '>>> pg_basebackup for replica 2 finished.' &&
-               unset PGPASSWORD &&
-               echo '>>> Starting replica 2 server as postgres user...' &&
-               chown -R postgres:postgres /var/lib/postgresql/data/pgdata_replica_2 && # Ensure correct ownership
-               su postgres -s /bin/bash -c "/usr/lib/postgresql/14/bin/postgres -D /var/lib/postgresql/data/pgdata_replica_2 -c hot_standby=on"
-      " # Closing quote for bash -c
-
-  redis:
-    image: redis:7
-    ports:
-      - "6379:6379"
-    volumes:
-      - redis_data:/data
-
-  minio:
-    image: minio/minio
-    ports:
-      - "9000:9000"
-      - "9001:9001"
-    environment:
-      - MINIO_ROOT_USER=minioadmin
-      - MINIO_ROOT_PASSWORD=minioadmin
-    volumes:
-      - minio_data:/data
-    command: server /data --console-address ":9001"
-
-
+      dockerfile: docker/web.Dockerfile
+    restart: unless-stopped
 
   admin_panel:
     build:
       context: .
       dockerfile: docker/admin_panel.Dockerfile
-    # Optional: Expose a different host port if needed, e.g., 3002
-    # ports:
-    #   - "3002:3000"
-    # Environment variables for the admin panel (e.g., API URL if different)
+    restart: unless-stopped
+
+  catalog-service-1: *catalog-service
+  catalog-service-2: *catalog-service
+
+  streaming-service-1: *streaming-service
+  streaming-service-2: *streaming-service
+
+  db:
+    image: docker.io/library/postgres:16
     environment:
-      - REACT_APP_API_URL=http://localhost/api # Reuse existing API endpoint
-      - WATCHPACK_POLLING=true # Can likely remove this too
-    # Optional: Mount volumes for development (like the web service)
-    # volumes:
-    #   - ./admin_panel:/app
-    #   - /app/node_modules
-    depends_on:
-      - loadbalancer # Depends on Nginx to be accessible
+      POSTGRES_USER: ualflix
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ualflix}
+      POSTGRES_DB: ualflix
+      REPLICATION_PASSWORD: ${REPLICATION_PASSWORD:-replicator}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./postgres_config/primary-init.sh:/docker-entrypoint-initdb.d/10-replication.sh:ro,z
+    ports:
+      - "127.0.0.1:5432:5432"
+    healthcheck:
+      # Checked over TCP: during first-time init the server only listens on the
+      # Unix socket, and the standbys need TCP.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U ualflix -d ualflix"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  db-replica-1:
+    <<: *db-replica
+    environment:
+      PRIMARY_HOST: db
+      REPLICATION_SLOT: replica_1
+      PGPASSWORD: ${REPLICATION_PASSWORD:-replicator}
+    volumes:
+      - postgres_replica_1_data:/var/lib/postgresql/data
+      - ./postgres_config/replica-entrypoint.sh:/usr/local/bin/replica-entrypoint.sh:ro,z
+    ports:
+      - "127.0.0.1:5433:5432"
+
+  db-replica-2:
+    <<: *db-replica
+    environment:
+      PRIMARY_HOST: db
+      REPLICATION_SLOT: replica_2
+      PGPASSWORD: ${REPLICATION_PASSWORD:-replicator}
+    volumes:
+      - postgres_replica_2_data:/var/lib/postgresql/data
+      - ./postgres_config/replica-entrypoint.sh:/usr/local/bin/replica-entrypoint.sh:ro,z
+    ports:
+      - "127.0.0.1:5434:5432"
+
+  redis:
+    image: docker.io/library/redis:7-alpine
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+
+  minio:
+    # MinIO stopped publishing community images after this release.
+    image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+    volumes:
+      - minio_data:/data
+    ports:
+      - "127.0.0.1:9001:9001"
+    restart: unless-stopped
 
 volumes:
   postgres_data:
-  postgres_replica_data: # Add volume for replica
+  postgres_replica_1_data:
   postgres_replica_2_data:
   redis_data:
   minio_data:
-  video_storage: 
