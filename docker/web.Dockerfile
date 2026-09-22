@@ -1,33 +1,10 @@
-# Stage 1: Build the application
-FROM node:18-alpine AS builder
-
+FROM docker.io/library/node:22-alpine AS build
 WORKDIR /app
-
-# Copy package.json and package-lock.json
-COPY web/package*.json ./
-
-# Install dependencies
-RUN npm install
-
-# Copy the rest of the application
+COPY web/package.json web/package-lock.json ./
+RUN npm ci
 COPY web/ ./
-
-# Build the application
 RUN npm run build
 
-# Stage 2: Serve the application
-FROM node:18-alpine
-
-WORKDIR /app
-
-# Install serve to run the built application
-RUN npm install -g serve
-
-# Copy only the build artifacts from the builder stage
-COPY --from=builder /app/build ./build
-
-# Expose the port the app runs on
-EXPOSE 3000
-
-# Command to run the application
-CMD ["serve", "-s", "build", "-l", "3000"] 
+FROM docker.io/library/nginx:1.28-alpine
+COPY docker/spa.nginx.conf /etc/nginx/conf.d/default.conf
+COPY --from=build /app/build /usr/share/nginx/html
